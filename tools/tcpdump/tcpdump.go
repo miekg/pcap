@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/miekg/pcap"
+	"github.com/lacework/pcap"
 )
 
 const (
