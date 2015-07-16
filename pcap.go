@@ -2,7 +2,7 @@
 package pcap
 
 /*
-#cgo LDFLAGS: /usr/lib/x86_64-linux-gnu/libpcap.a
+#cgo LDFLAGS: -Wl,-Bstatic -lpcap -Wl,-Bdynamic
 #include <stdlib.h>
 #include <pcap.h>
 
