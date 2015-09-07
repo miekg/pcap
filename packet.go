@@ -40,9 +40,9 @@ func (p *Packet) Decode() {
 
 	switch p.Type {
 	case TYPE_IP:
-		p.decodeIp()
+		p.decodeIp(0)
 	case TYPE_IP6:
-		p.decodeIp6()
+		p.decodeIp6(0)
 	case TYPE_ARP:
 		p.decodeArp()
 	}
@@ -109,8 +109,11 @@ func (p *Packet) decodeArp() {
 	p.Payload = p.Payload[8+2*arp.HwAddressSize+2*arp.ProtAddressSize:]
 }
 
-func (p *Packet) decodeIp() {
+func (p *Packet) decodeIp(recur int) {
 	if len(p.Payload) < 20 {
+		return
+	}
+	if recur > 3 {
 		return
 	}
 	pkt := p.Payload
@@ -148,7 +151,7 @@ func (p *Packet) decodeIp() {
 	case IP_ICMP:
 		p.decodeIcmp()
 	case IP_INIP:
-		p.decodeIp()
+		p.decodeIp(recur+1)
 	}
 }
 
@@ -206,7 +209,7 @@ func (p *Packet) decodeIcmp() *Icmphdr {
 	return icmp
 }
 
-func (p *Packet) decodeIp6() {
+func (p *Packet) decodeIp6(recur int) {
 	if len(p.Payload) < 40 {
 		return
 	}
@@ -231,6 +234,6 @@ func (p *Packet) decodeIp6() {
 	case IP_ICMP:
 		p.decodeIcmp()
 	case IP_INIP:
-		p.decodeIp()
+		p.decodeIp(recur+1)
 	}
 }
