@@ -2,9 +2,21 @@
 package pcap
 
 /*
-#cgo LDFLAGS: -Wl,-Bstatic -lpcap -Wl,-Bdynamic
+#cgo LDFLAGS: -Wl,-Bstatic -lpcap -Wl,-Bdynamic,--wrap=memcpy
 #include <stdlib.h>
 #include <pcap.h>
+#include <string.h>
+
+// See this for glibc 2.14 hack below
+// https://www.win.tue.nl/~aeb/linux/misc/gcc-semibug.html
+
+void *__memcpy_glibc_2_2_5(void *, const void *, size_t);
+
+asm(".symver __memcpy_glibc_2_2_5, memcpy@GLIBC_2.2.5");
+void *__wrap_memcpy(void *dest, const void *src, size_t n)
+{
+    return __memcpy_glibc_2_2_5(dest, src, n); 
+}
 
 // Workaround for not knowing how to cast to const u_char**
 int hack_pcap_next_ex(pcap_t * p, struct pcap_pkthdr **pkt_header,
