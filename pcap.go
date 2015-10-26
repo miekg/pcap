@@ -76,7 +76,7 @@ func Version() string               { return C.GoString(C.pcap_lib_version()) }
 func (p *Pcap) Datalink() int       { return int(C.pcap_datalink(p.cptr)) }
 func (e *pcapError) Error() string  { return e.string }
 func (p *Pcap) Geterror() error     { return &pcapError{C.GoString(C.pcap_geterr(p.cptr))} }
-func (p *Pcap) Next() (pkt *Packet) { rv, _ := p.NextEx(); return rv }
+func (p *Pcap) Next() (pkt *Packet) { rv, _ := p.NextEx(nil); return rv }
 
 func Create(device string) (handle *Pcap, err error) {
 	var buf *C.char
@@ -192,7 +192,7 @@ func (p *Pcap) Close() {
 	C.pcap_close(p.cptr)
 }
 
-func (p *Pcap) NextEx() (pkt *Packet, result int32) {
+func (p *Pcap) NextEx(pktin *Packet) (pkt *Packet, result int32) {
 	var pkthdr_ptr *C.struct_pcap_pkthdr
 	var pkthdr C.struct_pcap_pkthdr
 
@@ -206,15 +206,28 @@ func (p *Pcap) NextEx() (pkt *Packet, result int32) {
 	if nil == buf {
 		return
 	}
-	pkt = new(Packet)
+
+	if pktin == nil {
+		pkt = new(Packet)
+	} else {
+		pkt = pktin
+	}
+	pkt.Headers = nil
 	pkt.Time = time.Unix(int64(pkthdr.ts.tv_sec), int64(pkthdr.ts.tv_usec)*1000) // pcap provides usec but time.Unix requires nsec
 	pkt.Caplen = uint32(pkthdr.caplen)
 	pkt.Len = uint32(pkthdr.len)
-	pkt.Data = make([]byte, pkthdr.caplen)
 
-	for i := uint32(0); i < pkt.Caplen; i++ {
-		pkt.Data[i] = *(*byte)(unsafe.Pointer(uintptr(buf) + uintptr(i)))
+	if pkt.data == nil {
+		pkt.data = make([]byte, 512)
 	}
+	len := pkt.Caplen
+	if len > 512 {
+		len = 512
+	}
+	for i := uint32(0); i < len; i++ { // pkt.Caplen; i++ {
+		pkt.data[i] = *(*byte)(unsafe.Pointer(uintptr(buf) + uintptr(i)))
+	}
+	pkt.Data = pkt.data[:len]
 	return
 }
 

@@ -28,6 +28,12 @@ type Packet struct {
 
 	Headers []interface{} // decoded headers, in order
 	Payload []byte        // remaining non-header bytes
+
+	// Pre-allocated memory to reduce allocation overhead
+	data   []byte
+	iphdr  *Iphdr
+	ip6hdr *Ip6hdr
+	tcphdr *Tcphdr
 }
 
 // Decode decodes the headers of a Packet.
@@ -117,7 +123,10 @@ func (p *Packet) decodeIp(recur int) {
 		return
 	}
 	pkt := p.Payload
-	ip := new(Iphdr)
+	if p.iphdr == nil {
+		p.iphdr = new(Iphdr)
+	}
+	ip := p.iphdr
 
 	ip.Version = uint8(pkt[0]) >> 4
 	ip.Ihl = uint8(pkt[0]) & 0x0F
@@ -161,7 +170,11 @@ func (p *Packet) decodeTcp() {
 		return
 	}
 	pkt := p.Payload
-	tcp := new(Tcphdr)
+	if p.tcphdr == nil {
+		p.tcphdr = new(Tcphdr)
+	}
+	tcp := p.tcphdr
+
 	tcp.SrcPort = binary.BigEndian.Uint16(pkt[0:2])
 	tcp.DestPort = binary.BigEndian.Uint16(pkt[2:4])
 	tcp.Seq = binary.BigEndian.Uint32(pkt[4:8])
@@ -214,7 +227,11 @@ func (p *Packet) decodeIp6(recur int) {
 		return
 	}
 	pkt := p.Payload
-	ip6 := new(Ip6hdr)
+	if p.ip6hdr == nil {
+		p.ip6hdr = new(Ip6hdr)
+	}
+	ip6 := p.ip6hdr
+
 	ip6.Version = uint8(pkt[0]) >> 4
 	ip6.TrafficClass = uint8((binary.BigEndian.Uint16(pkt[0:2]) >> 4) & 0x00FF)
 	ip6.FlowLabel = binary.BigEndian.Uint32(pkt[0:4]) & 0x000FFFFF
