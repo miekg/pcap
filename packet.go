@@ -26,7 +26,8 @@ type Packet struct {
 	DestMac uint64
 	SrcMac  uint64
 
-	Headers []interface{} // decoded headers, in order
+	Headers [4]interface{} // decoded headers, in order
+	Headers_cnt 	int
 	Payload []byte        // remaining non-header bytes
 
 	// Pre-allocated memory to reduce allocation overhead
@@ -34,6 +35,17 @@ type Packet struct {
 	iphdr  *Iphdr
 	ip6hdr *Ip6hdr
 	tcphdr *Tcphdr
+
+}
+func (p *Packet) setHeader(header interface{}) error {
+
+	if p.Headers_cnt >= len(p.Headers) {
+		return fmt.Errorf("Too many headers")
+	}
+	p.Headers[p.Headers_cnt] = header
+	p.Headers_cnt++ 
+
+	return nil
 }
 
 // Decode decodes the headers of a Packet.
@@ -92,10 +104,10 @@ func (p *Packet) headerString(headers []interface{}) string {
 // The output is suitable for use in a tcpdump program.
 func (p *Packet) String() string {
 	// If there are no headers, print "unsupported protocol".
-	if len(p.Headers) == 0 {
+	if p.Headers_cnt == 0 {
 		return fmt.Sprintf("%s unsupported protocol %d", p.Time, int(p.Type))
 	}
-	return fmt.Sprintf("%s %s", p.Time, p.headerString(p.Headers))
+	return fmt.Sprintf("%s %s", p.Time, p.headerString(p.Headers[0:p.Headers_cnt]))
 }
 
 func (p *Packet) decodeArp() {
@@ -111,7 +123,8 @@ func (p *Packet) decodeArp() {
 	arp.DestHwAddress = pkt[8+arp.HwAddressSize+arp.ProtAddressSize : 8+2*arp.HwAddressSize+arp.ProtAddressSize]
 	arp.DestProtAddress = pkt[8+2*arp.HwAddressSize+arp.ProtAddressSize : 8+2*arp.HwAddressSize+2*arp.ProtAddressSize]
 
-	p.Headers = append(p.Headers, arp)
+	p.setHeader(arp)
+
 	p.Payload = p.Payload[8+2*arp.HwAddressSize+2*arp.ProtAddressSize:]
 }
 
@@ -150,7 +163,7 @@ func (p *Packet) decodeIp(recur int) {
 		pIhl = pEnd
 	}
 	p.Payload = pkt[pIhl:pEnd]
-	p.Headers = append(p.Headers, ip)
+	p.setHeader(ip)
 
 	switch ip.Protocol {
 	case IP_TCP:
@@ -189,7 +202,7 @@ func (p *Packet) decodeTcp() {
 		pDataOffset = pLenPayload
 	}
 	p.Payload = pkt[pDataOffset:]
-	p.Headers = append(p.Headers, tcp)
+	p.setHeader(tcp)
 }
 
 func (p *Packet) decodeUdp() {
@@ -202,7 +215,8 @@ func (p *Packet) decodeUdp() {
 	udp.DestPort = binary.BigEndian.Uint16(pkt[2:4])
 	udp.Length = binary.BigEndian.Uint16(pkt[4:6])
 	udp.Checksum = binary.BigEndian.Uint16(pkt[6:8])
-	p.Headers = append(p.Headers, udp)
+	p.setHeader(udp)
+
 	p.Payload = pkt[8:]
 }
 
@@ -218,7 +232,8 @@ func (p *Packet) decodeIcmp() *Icmphdr {
 	icmp.Id = binary.BigEndian.Uint16(pkt[4:6])
 	icmp.Seq = binary.BigEndian.Uint16(pkt[6:8])
 	p.Payload = pkt[8:]
-	p.Headers = append(p.Headers, icmp)
+	p.setHeader(icmp)
+
 	return icmp
 }
 
@@ -241,7 +256,7 @@ func (p *Packet) decodeIp6(recur int) {
 	ip6.SrcIp = pkt[8:24]
 	ip6.DestIp = pkt[24:40]
 	p.Payload = pkt[40:]
-	p.Headers = append(p.Headers, ip6)
+	p.setHeader(ip6)
 
 	switch ip6.NextHeader {
 	case IP_TCP:

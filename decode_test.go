@@ -53,7 +53,7 @@ func TestDecodeSimpleTcpPacket(t *testing.T) {
 	if p.SrcMac != 0xbc305be8d349 {
 		t.Error("Src mac", p.SrcMac)
 	}
-	if len(p.Headers) != 2 {
+	if p.Headers_cnt != 2 {
 		t.Error("Incorrect number of headers", len(p.Headers))
 		return
 	}

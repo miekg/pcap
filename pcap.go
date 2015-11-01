@@ -204,15 +204,14 @@ func (p *Pcap) NextEx(pktin *Packet) (pkt *Packet, result int32) {
 	pkthdr = *pkthdr_ptr
 
 	if nil == buf {
-		return
+		return pktin, result
 	}
-
 	if pktin == nil {
 		pkt = new(Packet)
 	} else {
 		pkt = pktin
+		pkt.Headers_cnt = 0
 	}
-	pkt.Headers = nil
 	pkt.Time = time.Unix(int64(pkthdr.ts.tv_sec), int64(pkthdr.ts.tv_usec)*1000) // pcap provides usec but time.Unix requires nsec
 	pkt.Caplen = uint32(pkthdr.caplen)
 	pkt.Len = uint32(pkthdr.len)
