@@ -19,13 +19,15 @@ void *__wrap_memcpy(void *dest, const void *src, size_t n)
 {
     return __memcpy_glibc_2_2_5(dest, src, n);
 }
-#define MAX_PACKETS     25
+#define MAX_PACKETS     10
+#define PCAP_DISPATCH_OVERFLOW 5
 #define MAX_PKT_CAPLEN  512
 struct user {
 	int	pkts;
 	char	*hdrs;
 	char	*data;
 	int	hdrsize;
+	pcap_t  *p;
 };
 extern int Sizeof_pcap_pkthdr(void) 
 {
@@ -34,8 +36,12 @@ extern int Sizeof_pcap_pkthdr(void)
 void pcaphandler(u_char *u2, const struct pcap_pkthdr *h, const u_char *bytes)
 {
 	struct user *u = (struct user *)u2;
+	int breakout = 0;
 
-	if (u->pkts == MAX_PACKETS) {
+	if (u->pkts >= MAX_PACKETS-1) {
+		breakout = 1;
+	}
+	if (u->pkts >= MAX_PACKETS*PCAP_DISPATCH_OVERFLOW) {
 		return;
 	}
 	memmove(u->hdrs + u->pkts*u->hdrsize, h, u->hdrsize);
@@ -46,21 +52,28 @@ void pcaphandler(u_char *u2, const struct pcap_pkthdr *h, const u_char *bytes)
 	}
 	memmove(u->data + u->pkts*MAX_PKT_CAPLEN, bytes, len);
 	u->pkts++;
+	if (breakout == 1) {
+		pcap_breakloop(u->p);
+	}
 }
 // Workaround for not knowing how to cast to const u_char**
 int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
 {
 	struct user u;
-	int ret;
+	int ret = 0;
 
 	u.pkts = 0;
 	u.hdrs = hdrs;
 	u.data = data;
 	u.hdrsize = Sizeof_pcap_pkthdr();
+	u.p = p;
 
 	ret = pcap_dispatch(p, MAX_PACKETS, pcaphandler,(u_char *)(&u));
 	if (u.pkts !=0) {
 		return u.pkts;
+	}
+	if (ret == -2) {
+		return 0;
 	}
 	return ret;
 }
@@ -122,8 +135,10 @@ func (p *Pcap) Next() (pkt *Packet) { rv, _ := p.NextEx(nil); return rv }
 
 func (h *Pcap) initHdrsData() {
 	h.hdrsize = int(C.Sizeof_pcap_pkthdr())
-	h.hdrs = (C.calloc(C.size_t(h.hdrsize*C.MAX_PACKETS), 1))
-	h.data = (C.calloc(C.MAX_PKT_CAPLEN*C.MAX_PACKETS, 1))
+
+	// Allocate 5x the buffer since pcap_dispatch seems to overflow
+	h.hdrs = (C.calloc(C.size_t(h.hdrsize*C.MAX_PACKETS*C.PCAP_DISPATCH_OVERFLOW), 1))
+	h.data = (C.calloc(C.MAX_PKT_CAPLEN*C.MAX_PACKETS*C.PCAP_DISPATCH_OVERFLOW, 1))
 	h.max = 0
 	h.used = 0
 }
