@@ -17,16 +17,53 @@ void *__memcpy_glibc_2_2_5(void *, const void *, size_t);
 asm(".symver __memcpy_glibc_2_2_5, memmove@GLIBC_2.2.5");
 void *__wrap_memcpy(void *dest, const void *src, size_t n)
 {
-    return __memcpy_glibc_2_2_5(dest, src, n); 
+    return __memcpy_glibc_2_2_5(dest, src, n);
 }
-
-// Workaround for not knowing how to cast to const u_char**
-int hack_pcap_next_ex(pcap_t * p, struct pcap_pkthdr **pkt_header,
-		      u_char ** pkt_data)
+#define MAX_PACKETS     25
+#define MAX_PKT_CAPLEN  512
+struct user {
+	int	pkts;
+	char	*hdrs;
+	char	*data;
+	int	hdrsize;
+};
+extern int Sizeof_pcap_pkthdr(void) 
 {
-	return pcap_next_ex(p, pkt_header, (const u_char **)pkt_data);
+	return sizeof(struct pcap_pkthdr);
 }
+void pcaphandler(u_char *u2, const struct pcap_pkthdr *h, const u_char *bytes)
+{
+	struct user *u = (struct user *)u2;
 
+	if (u->pkts == MAX_PACKETS) {
+		return;
+	}
+	memmove(u->hdrs + u->pkts*u->hdrsize, h, u->hdrsize);
+
+	int len = h->caplen;
+	if (len > MAX_PKT_CAPLEN) {
+		len=MAX_PKT_CAPLEN;
+	}
+	memmove(u->data + u->pkts*MAX_PKT_CAPLEN, bytes, len);
+	u->pkts++;
+}
+// Workaround for not knowing how to cast to const u_char**
+int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
+{
+	struct user u;
+	int ret;
+
+	u.pkts = 0;
+	u.hdrs = hdrs;
+	u.data = data;
+	u.hdrsize = Sizeof_pcap_pkthdr();
+
+	ret = pcap_dispatch(p, MAX_PACKETS, pcaphandler,(u_char *)(&u));
+	if (u.pkts !=0) {
+		return u.pkts;
+	}
+	return ret;
+}
 void hack_pcap_dump(pcap_dumper_t * dumper, struct pcap_pkthdr *pkt_header,
 		      u_char * pkt_data)
 {
@@ -45,6 +82,11 @@ import (
 
 type Pcap struct {
 	cptr *C.pcap_t
+	hdrs unsafe.Pointer
+	data unsafe.Pointer
+	max  int
+	used int
+	hdrsize int
 }
 
 type PcapDumper struct {
@@ -78,6 +120,13 @@ func (e *pcapError) Error() string  { return e.string }
 func (p *Pcap) Geterror() error     { return &pcapError{C.GoString(C.pcap_geterr(p.cptr))} }
 func (p *Pcap) Next() (pkt *Packet) { rv, _ := p.NextEx(nil); return rv }
 
+func (h *Pcap) initHdrsData() {
+	h.hdrsize = int(C.Sizeof_pcap_pkthdr())
+	h.hdrs = (C.calloc(C.size_t(h.hdrsize*C.MAX_PACKETS), 1))
+	h.data = (C.calloc(C.MAX_PKT_CAPLEN*C.MAX_PACKETS, 1))
+	h.max = 0
+	h.used = 0
+}
 func Create(device string) (handle *Pcap, err error) {
 	var buf *C.char
 	buf = (*C.char)(C.calloc(ERRBUF_SIZE, 1))
@@ -92,6 +141,7 @@ func Create(device string) (handle *Pcap, err error) {
 		err = &pcapError{C.GoString(buf)}
 	} else {
 		handle = h
+		h.initHdrsData()
 	}
 
 	C.free(unsafe.Pointer(buf))
@@ -162,6 +212,7 @@ func OpenLive(device string, snaplen int32, promisc bool, timeout_ms int32) (han
 		err = &pcapError{C.GoString(buf)}
 	} else {
 		handle = h
+		h.initHdrsData()
 	}
 	C.free(unsafe.Pointer(buf))
 	return
@@ -182,6 +233,7 @@ func OpenOffline(file string) (handle *Pcap, err error) {
 		err = &pcapError{C.GoString(buf)}
 	} else {
 		handle = h
+		h.initHdrsData()
 	}
 	C.free(unsafe.Pointer(buf))
 	return
@@ -193,41 +245,46 @@ func (p *Pcap) Close() {
 }
 
 func (p *Pcap) NextEx(pktin *Packet) (pkt *Packet, result int32) {
-	var pkthdr_ptr *C.struct_pcap_pkthdr
-	var pkthdr C.struct_pcap_pkthdr
-
-	var buf_ptr *C.u_char
-	var buf unsafe.Pointer
-	result = int32(C.hack_pcap_next_ex(p.cptr, &pkthdr_ptr, &buf_ptr))
-
-	buf = unsafe.Pointer(buf_ptr)
-	pkthdr = *pkthdr_ptr
-
-	if nil == buf {
-		return pktin, result
-	}
 	if pktin == nil {
 		pkt = new(Packet)
 	} else {
 		pkt = pktin
 		pkt.Headers_cnt = 0
 	}
+	if pkt.data == nil {
+		pkt.data = make([]byte, C.MAX_PKT_CAPLEN)
+	}
+	pkt.Data = nil
+
+	if p.max-p.used > 0 {
+		p.getNextPkt(pkt)
+		return pkt, 1
+	}
+	max := int32(C.hack_pcap_next_ex(p.cptr, (*C.char)(p.hdrs), (*C.char)(p.data)))
+	if max > 0 {
+		p.max = int(max)
+		p.used = 0
+		p.getNextPkt(pkt)
+
+		return pkt, 1
+	}
+	return pkt, max
+}
+
+func (p *Pcap) getNextPkt(pkt *Packet) {
+
+	pkthdr := *((*C.struct_pcap_pkthdr)(unsafe.Pointer(uintptr(p.hdrs) + uintptr(p.hdrsize*p.used))))
+	buf := unsafe.Pointer(uintptr(p.data) + uintptr(C.MAX_PKT_CAPLEN*p.used))
+	p.used++
+
 	pkt.Time = time.Unix(int64(pkthdr.ts.tv_sec), int64(pkthdr.ts.tv_usec)*1000) // pcap provides usec but time.Unix requires nsec
 	pkt.Caplen = uint32(pkthdr.caplen)
 	pkt.Len = uint32(pkthdr.len)
 
-	if pkt.data == nil {
-		pkt.data = make([]byte, 512)
+	if pkt.Caplen > C.MAX_PKT_CAPLEN {
+		pkt.Caplen = C.MAX_PKT_CAPLEN
 	}
-	len := pkt.Caplen
-	if len > 512 {
-		len = 512
-	}
-	for i := uint32(0); i < len; i++ { // pkt.Caplen; i++ {
-		pkt.data[i] = *(*byte)(unsafe.Pointer(uintptr(buf) + uintptr(i)))
-	}
-	pkt.Data = pkt.data[:len]
-	return
+	pkt.Data = (*[C.MAX_PKT_CAPLEN]byte)(buf)[0:pkt.Caplen]
 }
 
 func (p *Pcap) Getstats() (stat *Stat, err error) {
@@ -391,6 +448,7 @@ func (p *Pcap) DumpOpen(ofile *string) (dumper *PcapDumper, err error) {
 	return
 }
 
+/*
 func (p *Pcap) PcapLoop(pktnum int, dumper *PcapDumper) (result int32, err error) {
 	var pkthdr_ptr *C.struct_pcap_pkthdr
 	var buf_ptr *C.u_char
@@ -423,6 +481,7 @@ func (p *Pcap) PcapLoop(pktnum int, dumper *PcapDumper) (result int32, err error
 	}
 	return
 }
+*/
 
 func (p *Pcap) PcapDump(dumper *PcapDumper, pkthdr_ptr *C.struct_pcap_pkthdr, buf_ptr *C.u_char) {
 	C.hack_pcap_dump(dumper.cptr, pkthdr_ptr, buf_ptr)

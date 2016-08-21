@@ -72,6 +72,7 @@ func main() {
 		}
 	}
 
+/*
 	if *ofile != "" {
 		dumper, oerr := h.DumpOpen(ofile)
 		addHandler(h, dumper)
@@ -85,8 +86,9 @@ func main() {
 		defer h.PcapDumpClose(dumper)
 		return
 	}
+*/
 
-	for pkt, r := h.NextEx(); r >= 0; pkt, r = h.NextEx() {
+	for pkt, r := h.NextEx(nil); r >= 0; pkt, r = h.NextEx(nil) {
 		if r == 0 {
 			// timeout, continue
 			continue
@@ -96,7 +98,6 @@ func main() {
 		if *hexdump {
 			Hexdump(pkt)
 		}
-
 	}
 	fmt.Fprintln(os.Stderr, "tcpdump:", h.Geterror())
 

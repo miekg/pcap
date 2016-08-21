@@ -3,7 +3,7 @@ package pcap
 import (
 	"fmt"
 	"net"
-	"os"
+//	"os"
 	"testing"
 	"time"
 )
@@ -55,6 +55,7 @@ func TestPcapOpenLive(t *testing.T) {
 	testPcapHandle(t, pcapOpenLive)
 }
 
+/*
 func TestPcapDump(t *testing.T) {
 	port := 54321
 	h, err := pcapOpenLive("lo", fmt.Sprintf("udp dst port %d", port), 2000)
@@ -111,6 +112,7 @@ func TestPcapDump(t *testing.T) {
 
 	return
 }
+*/
 
 func pcapCreate(intf string, filter string, readTo int32) (h *Pcap, err error) {
 	h, err = Create("lo")
