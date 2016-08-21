@@ -36,11 +36,11 @@ extern int Sizeof_pcap_pkthdr(void)
 void pcaphandler(u_char *u2, const struct pcap_pkthdr *h, const u_char *bytes)
 {
 	struct user *u = (struct user *)u2;
-	int breakout = 0;
+//	int breakout = 0;
 
-	if (u->pkts >= MAX_PACKETS-1) {
-		breakout = 1;
-	}
+//	if (u->pkts >= MAX_PACKETS-1) {
+//		breakout = 1;
+//	}
 	if (u->pkts >= MAX_PACKETS*PCAP_DISPATCH_OVERFLOW) {
 		return;
 	}
@@ -52,9 +52,9 @@ void pcaphandler(u_char *u2, const struct pcap_pkthdr *h, const u_char *bytes)
 	}
 	memmove(u->data + u->pkts*MAX_PKT_CAPLEN, bytes, len);
 	u->pkts++;
-	if (breakout == 1) {
-		pcap_breakloop(u->p);
-	}
+//	if (breakout == 1) {
+//		pcap_breakloop(u->p);
+//	}
 }
 // Workaround for not knowing how to cast to const u_char**
 int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
@@ -72,9 +72,10 @@ int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
 	if (u.pkts !=0) {
 		return u.pkts;
 	}
-	if (ret == -2) {
-		return 0;
-	}
+//	if (ret == -2) {
+//printf("Setting ret to 0 %d %d\n", ret, u.pkts);
+//		return 0;
+//	}
 	return ret;
 }
 void hack_pcap_dump(pcap_dumper_t * dumper, struct pcap_pkthdr *pkt_header,
