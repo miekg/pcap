@@ -1,8 +1,10 @@
 package pcap
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/lacework/agent/datacollector/dlog"
 	"reflect"
 	"strings"
 	"time"
@@ -16,9 +18,11 @@ type PacketTime struct {
 // Packet is a single packet parsed from a pcap file.
 type Packet struct {
 	// porting from 'pcap_pkthdr' struct
-	Time   time.Time // packet send/receive time
-	Caplen uint32    // bytes stored in the file (caplen <= len)
-	Len    uint32    // bytes sent/received
+	Time    time.Time // packet send/receive time
+	Caplen  uint32    // bytes stored in the file (caplen <= len)
+	Len     uint32    // bytes sent/received
+	Partial uint32    // partial bytes clipped
+	Seq     uint32    // pkt capture sequence number
 
 	Data []byte // packet data
 
@@ -26,24 +30,24 @@ type Packet struct {
 	DestMac uint64
 	SrcMac  uint64
 
-	Headers [4]interface{} // decoded headers, in order
-	Headers_cnt 	int
-	Payload []byte        // remaining non-header bytes
+	Headers     [4]interface{} // decoded headers, in order
+	Headers_cnt int
+	Payload     []byte // remaining non-header bytes
 
 	// Pre-allocated memory to reduce allocation overhead
 	data   []byte
 	iphdr  *Iphdr
 	ip6hdr *Ip6hdr
 	tcphdr *Tcphdr
-
 }
+
 func (p *Packet) setHeader(header interface{}) error {
 
 	if p.Headers_cnt >= len(p.Headers) {
 		return fmt.Errorf("Too many headers")
 	}
 	p.Headers[p.Headers_cnt] = header
-	p.Headers_cnt++ 
+	p.Headers_cnt++
 
 	return nil
 }
@@ -118,6 +122,8 @@ func (p *Packet) decodeArp() {
 	arp.HwAddressSize = pkt[4]
 	arp.ProtAddressSize = pkt[5]
 	arp.Operation = binary.BigEndian.Uint16(pkt[6:8])
+	dlog.Infof("s: %d L:%d(H:%d P:%d) -> T:%x D:%x S:%x A:%x P:%x %x", p.Seq, len(p.Payload), arp.HwAddressSize, arp.ProtAddressSize, p.Type, p.DestMac, p.SrcMac, arp.Addrtype, arp.Protocol, bytes.Split(p.Data, []byte(",")))
+	//if arp.HwAddressSize != 0 && len(pkt) >= int(8+2*arp.HwAddressSize+2*arp.ProtAddressSize) {
 	arp.SourceHwAddress = pkt[8 : 8+arp.HwAddressSize]
 	arp.SourceProtAddress = pkt[8+arp.HwAddressSize : 8+arp.HwAddressSize+arp.ProtAddressSize]
 	arp.DestHwAddress = pkt[8+arp.HwAddressSize+arp.ProtAddressSize : 8+2*arp.HwAddressSize+arp.ProtAddressSize]
@@ -126,6 +132,8 @@ func (p *Packet) decodeArp() {
 	p.setHeader(arp)
 
 	p.Payload = p.Payload[8+2*arp.HwAddressSize+2*arp.ProtAddressSize:]
+	//} else {
+	//}
 }
 
 func (p *Packet) decodeIp(recur int) {
@@ -173,7 +181,7 @@ func (p *Packet) decodeIp(recur int) {
 	case IP_ICMP:
 		p.decodeIcmp()
 	case IP_INIP:
-		p.decodeIp(recur+1)
+		p.decodeIp(recur + 1)
 	}
 }
 
@@ -266,6 +274,6 @@ func (p *Packet) decodeIp6(recur int) {
 	case IP_ICMP:
 		p.decodeIcmp()
 	case IP_INIP:
-		p.decodeIp(recur+1)
+		p.decodeIp(recur + 1)
 	}
 }

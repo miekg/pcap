@@ -29,7 +29,7 @@ struct user {
 	int	hdrsize;
 	pcap_t  *p;
 };
-extern int Sizeof_pcap_pkthdr(void) 
+extern int Sizeof_pcap_pkthdr(void)
 {
 	return sizeof(struct pcap_pkthdr);
 }
@@ -67,6 +67,7 @@ int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
 	u.data = data;
 	u.hdrsize = Sizeof_pcap_pkthdr();
 	u.p = p;
+	u.pkts = 0;
 
 	ret = pcap_dispatch(p, MAX_PACKETS, pcaphandler,(u_char *)(&u));
 	if (u.pkts !=0) {
@@ -87,7 +88,10 @@ void hack_pcap_dump(pcap_dumper_t * dumper, struct pcap_pkthdr *pkt_header,
 import "C"
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
+	"github.com/lacework/agent/datacollector/dlog"
 	"net"
 	"syscall"
 	"time"
@@ -95,11 +99,12 @@ import (
 )
 
 type Pcap struct {
-	cptr *C.pcap_t
-	hdrs unsafe.Pointer
-	data unsafe.Pointer
-	max  int
-	used int
+	cptr    *C.pcap_t
+	hdrs    unsafe.Pointer
+	data    unsafe.Pointer
+	max     int
+	used    int
+	seq     uint32
 	hdrsize int
 }
 
@@ -119,6 +124,7 @@ type Interface struct {
 	Name        string
 	Description string
 	Addresses   []IFAddress
+	Flags       uint32
 	// TODO: add more elements
 }
 
@@ -142,6 +148,7 @@ func (h *Pcap) initHdrsData() {
 	h.data = (C.calloc(C.MAX_PKT_CAPLEN*C.MAX_PACKETS*C.PCAP_DISPATCH_OVERFLOW, 1))
 	h.max = 0
 	h.used = 0
+	h.seq = 0
 }
 func Create(device string) (handle *Pcap, err error) {
 	var buf *C.char
@@ -276,10 +283,13 @@ func (p *Pcap) NextEx(pktin *Packet) (pkt *Packet, result int32) {
 		p.getNextPkt(pkt)
 		return pkt, 1
 	}
+	p.used = 0
+	p.max = 0
 	max := int32(C.hack_pcap_next_ex(p.cptr, (*C.char)(p.hdrs), (*C.char)(p.data)))
+	p.seq++
+	pkt.Seq = p.seq
 	if max > 0 {
 		p.max = int(max)
-		p.used = 0
 		p.getNextPkt(pkt)
 
 		return pkt, 1
@@ -298,9 +308,15 @@ func (p *Pcap) getNextPkt(pkt *Packet) {
 	pkt.Len = uint32(pkthdr.len)
 
 	if pkt.Caplen > C.MAX_PKT_CAPLEN {
+		pkt.Partial = pkt.Caplen - C.MAX_PKT_CAPLEN
 		pkt.Caplen = C.MAX_PKT_CAPLEN
 	}
 	pkt.Data = (*[C.MAX_PKT_CAPLEN]byte)(buf)[0:pkt.Caplen]
+	if int(binary.BigEndian.Uint16(pkt.Data[12:14])) == 0x0806 {
+		if pkt.Data[14+4] == 0 && len(pkt.Data) >= int(8+2*pkt.Data[14+4]+2*pkt.Data[14+5]) {
+			dlog.Infof("s:%d m:%d u:%d r:%d pktin [C:%d P:%d L:%d] Data %x", p.seq, p.max, p.used, pkt.Caplen, pkt.Partial, pkt.Len, bytes.Split(pkt.Data, []byte(",")))
+		}
+	}
 }
 
 func (p *Pcap) Getstats() (stat *Stat, err error) {
@@ -391,6 +407,7 @@ func FindAllDevs() (ifs []Interface, err error) {
 		iface.Name = C.GoString(dev.name)
 		iface.Description = C.GoString(dev.description)
 		iface.Addresses = findAllAddresses(dev.addresses)
+		iface.Flags = uint32(dev.flags)
 		// TODO: add more elements
 		ifs[j] = iface
 		j++
