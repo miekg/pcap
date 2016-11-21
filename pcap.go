@@ -21,7 +21,7 @@ void *__wrap_memcpy(void *dest, const void *src, size_t n)
 }
 #define MAX_PACKETS     10
 #define PCAP_DISPATCH_OVERFLOW 5
-#define MAX_PKT_CAPLEN  512
+#define MAX_PKT_CAPLEN  576
 struct user {
 	int	pkts;
 	char	*hdrs;
@@ -62,7 +62,6 @@ int hack_pcap_next_ex(pcap_t * p, char *hdrs, char *data)
 	struct user u;
 	int ret = 0;
 
-	u.pkts = 0;
 	u.hdrs = hdrs;
 	u.data = data;
 	u.hdrsize = Sizeof_pcap_pkthdr();
