@@ -3,6 +3,7 @@ package pcap
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -124,7 +125,7 @@ func (arp *Arphdr) String() (s string) {
 			decodemac(arp.SourceHwAddress), arp.SourceProtAddress,
 			decodemac(arp.DestHwAddress), arp.DestProtAddress)
 	} else {
-		s = fmt.Sprintf("addrtype = %d protocol = %d", arp.Addrtype, arp.Protocol)
+		s = "addrtype = " + strconv.FormatInt(int64(arp.Addrtype), 10) + " protocol = " + strconv.FormatInt(int64(arp.Protocol), 10)
 	}
 	return
 }
