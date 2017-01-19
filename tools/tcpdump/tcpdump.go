@@ -59,7 +59,7 @@ func main() {
 
 	h, err := pcap.OpenLive(*device, int32(*snaplen), true, 500)
 	if h == nil {
-		fmt.Fprintf(os.Stderr, "tcpdump:", err)
+		fmt.Fprintf(os.Stderr, "tcpdump: %v", err)
 		return
 	}
 	defer h.Close()
@@ -72,21 +72,21 @@ func main() {
 		}
 	}
 
-/*
-	if *ofile != "" {
-		dumper, oerr := h.DumpOpen(ofile)
-		addHandler(h, dumper)
-		if oerr != nil {
-			fmt.Fprintln(os.Stderr, "tcpdump: couldn't write to file:", oerr)
+	/*
+		if *ofile != "" {
+			dumper, oerr := h.DumpOpen(ofile)
+			addHandler(h, dumper)
+			if oerr != nil {
+				fmt.Fprintln(os.Stderr, "tcpdump: couldn't write to file:", oerr)
+			}
+			_, lerr := h.PcapLoop(0, dumper)
+			if lerr != nil {
+				fmt.Fprintln(os.Stderr, "tcpdump: loop error:", lerr, h.Geterror())
+			}
+			defer h.PcapDumpClose(dumper)
+			return
 		}
-		_, lerr := h.PcapLoop(0, dumper)
-		if lerr != nil {
-			fmt.Fprintln(os.Stderr, "tcpdump: loop error:", lerr, h.Geterror())
-		}
-		defer h.PcapDumpClose(dumper)
-		return
-	}
-*/
+	*/
 
 	for pkt, r := h.NextEx(nil); r >= 0; pkt, r = h.NextEx(nil) {
 		if r == 0 {
@@ -149,7 +149,7 @@ func Dumpline(addr uint32, line []byte) {
 	fmt.Print("  ")
 	for i = 0; i < 16 && i < uint16(len(line)); i++ {
 		if line[i] >= 32 && line[i] <= 126 {
-			fmt.Println("%c", line[i])
+			fmt.Printf("%c", line[i])
 		} else {
 			fmt.Print(".")
 		}
