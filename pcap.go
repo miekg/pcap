@@ -6,6 +6,7 @@ package pcap
 #include <stdlib.h>
 #include <pcap.h>
 #include <string.h>
+#include <ifaddrs.h>
 
 // See this for glibc 2.14 hack below
 // https://www.win.tue.nl/~aeb/linux/misc/gcc-semibug.html
@@ -92,6 +93,7 @@ import (
 	"errors"
 	"github.com/lacework/agent/datacollector/dlog"
 	"net"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -123,13 +125,16 @@ type Interface struct {
 	Name        string
 	Description string
 	Addresses   []IFAddress
-	Flags       uint32
+	Flags       uint
 	// TODO: add more elements
 }
 
 type IFAddress struct {
 	IP      net.IP
 	Netmask net.IPMask
+	Family  uint16
+	IfName  string
+	Flags   uint
 	// TODO: add broadcast + PtP dst ?
 }
 
@@ -384,6 +389,26 @@ func DatalinkValueToDescription(dlt int) string {
 	return ""
 }
 
+func getNetworkInterfaceInfo(ifaddrs *C.struct_ifaddrs, ipaddr IFAddress) (string, uint) {
+	for fi := ifaddrs; fi != nil; fi = fi.ifa_next {
+		if (fi.ifa_addr == nil) || (C.int(fi.ifa_flags)&syscall.IFF_UP != syscall.IFF_UP) {
+			continue
+		}
+		if (C.int(fi.ifa_addr.sa_family) == syscall.AF_INET) || (C.int(fi.ifa_addr.sa_family) == syscall.AF_INET6) {
+			var ifaddr IFAddress
+			var err error
+			if ifaddr.IP, ifaddr.Family, err = sockaddrToIP((*syscall.RawSockaddr)(unsafe.Pointer(fi.ifa_addr))); err != nil {
+				sa_in := (*C.struct_sockaddr_in)(unsafe.Pointer(fi.ifa_addr))
+				dlog.Errf("sockadd to IP %v err %v", sa_in, err)
+			}
+			if ifaddr.IP.Equal(ipaddr.IP) == true {
+				return C.GoString(fi.ifa_name), uint(fi.ifa_flags)
+			}
+		}
+	}
+	return "", 0
+}
+
 func FindAllDevs() (ifs []Interface, err error) {
 	var buf *C.char
 	buf = (*C.char)(C.calloc(ERRBUF_SIZE, 1))
@@ -399,22 +424,53 @@ func FindAllDevs() (ifs []Interface, err error) {
 	for i = 0; dev != nil; dev = (*C.pcap_if_t)(dev.next) {
 		i++
 	}
-	ifs = make([]Interface, i)
+	ifs = make([]Interface, 0, 1) // i not possible to use since we may have network aliases
 	dev = alldevsp
+	var ifaddrs *C.struct_ifaddrs
+	getrc, _ := C.getifaddrs(&ifaddrs)
+	if getrc == 0 {
+		defer C.freeifaddrs(ifaddrs)
+	}
 	for j := uint32(0); dev != nil; dev = (*C.pcap_if_t)(dev.next) {
+		var ipv4, ipv6 int
 		var iface Interface
-		iface.Name = C.GoString(dev.name)
-		iface.Description = C.GoString(dev.description)
-		iface.Addresses = findAllAddresses(dev.addresses)
-		iface.Flags = uint32(dev.flags)
+		iface.Addresses, ipv4, ipv6 = findAllAddresses(dev.addresses)
+		if (ipv4 > 1 || ipv6 > 1) && getrc == 0 {
+			names := make(map[string]uint)
+			for k, ipaddr := range iface.Addresses {
+				iface.Addresses[k].IfName, iface.Addresses[k].Flags = getNetworkInterfaceInfo(ifaddrs, ipaddr)
+				if names[iface.Addresses[k].IfName] == 0 {
+					names[iface.Addresses[k].IfName] = iface.Addresses[k].Flags
+				}
+			}
+			for name, _ := range names {
+				var iface1 Interface
+				ifaceAddr := iface.Addresses
+				iface1.Addresses = make([]IFAddress, 0, 1)
+				iface1.Description = C.GoString(dev.description)
+				for _, ipaddr := range ifaceAddr {
+					if strings.Compare(name, ipaddr.IfName) == 0 {
+						iface1.Addresses = append(iface1.Addresses, ipaddr)
+						iface1.Flags = ipaddr.Flags
+						iface1.Name = name
+					}
+				}
+				ifs = append(ifs, iface1)
+				j++
+			}
+		} else {
+			iface.Description = C.GoString(dev.description)
+			iface.Flags = uint(dev.flags)
+			iface.Name = C.GoString(dev.name)
+			ifs = append(ifs, iface)
+			j++
+		}
 		// TODO: add more elements
-		ifs[j] = iface
-		j++
 	}
 	return
 }
 
-func findAllAddresses(addresses *_Ctype_struct_pcap_addr) (retval []IFAddress) {
+func findAllAddresses(addresses *_Ctype_struct_pcap_addr) (retval []IFAddress, ipv4, ipv6 int) {
 	// TODO - make it support more than IPv4 and IPv6?
 	retval = make([]IFAddress, 0, 1)
 	for curaddr := addresses; curaddr != nil; curaddr = (*_Ctype_struct_pcap_addr)(curaddr.next) {
@@ -423,18 +479,23 @@ func findAllAddresses(addresses *_Ctype_struct_pcap_addr) (retval []IFAddress) {
 		}
 		var a IFAddress
 		var err error
-		if a.IP, err = sockaddrToIP((*syscall.RawSockaddr)(unsafe.Pointer(curaddr.addr))); err != nil {
+		if a.IP, a.Family, err = sockaddrToIP((*syscall.RawSockaddr)(unsafe.Pointer(curaddr.addr))); err != nil {
 			continue
 		}
-		if a.Netmask, err = sockaddrToIP((*syscall.RawSockaddr)(unsafe.Pointer(curaddr.netmask))); err != nil {
+		if a.Netmask, _, err = sockaddrToIP((*syscall.RawSockaddr)(unsafe.Pointer(curaddr.netmask))); err != nil {
 			continue
+		}
+		if a.Family == syscall.AF_INET {
+			ipv4++
+		} else if a.Family == syscall.AF_INET6 {
+			ipv6++
 		}
 		retval = append(retval, a)
 	}
 	return
 }
 
-func sockaddrToIP(rsa *syscall.RawSockaddr) (IP []byte, err error) {
+func sockaddrToIP(rsa *syscall.RawSockaddr) (IP []byte, Family uint16, err error) {
 	switch rsa.Family {
 	case syscall.AF_INET:
 		pp := (*syscall.RawSockaddrInet4)(unsafe.Pointer(rsa))
@@ -442,6 +503,7 @@ func sockaddrToIP(rsa *syscall.RawSockaddr) (IP []byte, err error) {
 		for i := 0; i < len(IP); i++ {
 			IP[i] = pp.Addr[i]
 		}
+		Family = syscall.AF_INET
 		return
 	case syscall.AF_INET6:
 		pp := (*syscall.RawSockaddrInet6)(unsafe.Pointer(rsa))
@@ -449,6 +511,7 @@ func sockaddrToIP(rsa *syscall.RawSockaddr) (IP []byte, err error) {
 		for i := 0; i < len(IP); i++ {
 			IP[i] = pp.Addr[i]
 		}
+		Family = syscall.AF_INET6
 		return
 	}
 	err = errors.New("Unsupported address type")
