@@ -91,7 +91,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"github.com/lacework/agent/datacollector/dlog"
+	"io/ioutil"
 	"net"
 	"strings"
 	"syscall"
@@ -591,4 +593,43 @@ func (p *Pcap) PcapDumpFlush(dumper *PcapDumper) error {
 
 func (p *Pcap) PcapDumpClose(dumper *PcapDumper) {
 	C.pcap_dump_close(dumper.cptr)
+}
+
+type ifreq struct {
+	ifr_name [16]byte
+	ifr_data uintptr
+}
+
+func GetArp(if_name string) string {
+	data, err := ioutil.ReadFile("/sys/class/net/" + if_name + "/address")
+	if err != nil {
+		sockfd, _, err := syscall.RawSyscall(syscall.SYS_SOCKET, syscall.AF_INET, syscall.SOCK_DGRAM, syscall.IPPROTO_IP)
+		if err != 0 {
+			return ""
+		}
+		defer syscall.Close(int(sockfd))
+
+		var name [16]byte
+		copy(name[:], []byte(if_name))
+
+		var hwaddr [16]byte
+		ifr := ifreq{
+			ifr_name: name,
+			ifr_data: uintptr(unsafe.Pointer(&hwaddr)),
+		}
+		_, _, err = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sockfd), syscall.SIOCGIFHWADDR, uintptr(unsafe.Pointer(&ifr)))
+		if err != 0 {
+			return ""
+		}
+		// magic to convert uintptr to byte array
+		const sizeOfUintPtr = unsafe.Sizeof(uintptr(0))
+		macddr := (*[sizeOfUintPtr]byte)(unsafe.Pointer(&ifr.ifr_data))[:]
+
+		return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", macddr[2], macddr[3], macddr[4], macddr[5], macddr[6], macddr[7])
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
 }
